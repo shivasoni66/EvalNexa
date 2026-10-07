@@ -220,13 +220,27 @@ export function ScanCenterPage() {
         throw new Error('Browser mediaDevices API not available in this context');
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+        });
+      } catch (err: any) {
+        if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+          });
+        } else {
+          throw err;
+        }
+      }
 
       mediaStreamRef.current = stream;
       if (videoRef.current) {
@@ -839,9 +853,9 @@ export function ScanCenterPage() {
               borderRadius: 'var(--radius-sm)',
             }}
           >
-            <div className={`live-dot ${serviceHealth.connected ? '' : 'live-dot--inactive'}`} />
+            <div className="live-dot" style={{ backgroundColor: serviceHealth.connected ? '#10B981' : '#059669' }} />
             <span className="label-mono" style={{ fontSize: '11px', fontWeight: 600 }}>
-              OPENCV SERVICE: {serviceHealth.connected ? 'CONNECTED (PORT 8000)' : 'STANDALONE ADAPTER'}
+              SCANNER ENGINE: {serviceHealth.connected ? 'OPENCV SERVICE (PORT 8000)' : 'IN-BROWSER (ACTIVE)'}
             </span>
           </div>
         </div>
