@@ -85,6 +85,11 @@ export const config = {
     model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
     isConfigured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0),
   },
+  groq: {
+    apiKey: process.env.GROQ_API_KEY || '',
+    model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    isConfigured: Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim().length > 0),
+  },
 };
 
 export { geminiManager } from './gemini';

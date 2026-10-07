@@ -17,8 +17,9 @@ export const aiAssistantLimiter = rateLimit({
   max: 30, // 30 AI copilot requests per minute per user/IP
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req: any) => {
-    return req.user?._id?.toString() || ipKeyGenerator(req.ip);
+    return req.user?._id?.toString() || ipKeyGenerator(req.ip || '127.0.0.1');
   },
   message: {
     success: false,

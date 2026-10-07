@@ -7,7 +7,7 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<any>;
   logout: () => Promise<void>;
 }
 
@@ -15,7 +15,16 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('evalnexa_token'));
+  const [token, setToken] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tokenFromUrl = params.get('token');
+    if (tokenFromUrl) {
+      localStorage.setItem('evalnexa_token', tokenFromUrl);
+      window.history.replaceState({}, '', window.location.pathname);
+      return tokenFromUrl;
+    }
+    return localStorage.getItem('evalnexa_token');
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const bootstrap = useCallback(async () => {
@@ -44,6 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(data.data.token);
     localStorage.setItem('evalnexa_token', data.data.token);
     connectSocket(data.data.token);
+    return data.data;
   }, []);
 
   const logout = useCallback(async () => {
