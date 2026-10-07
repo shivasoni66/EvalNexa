@@ -28,13 +28,19 @@ function validateBackendOrigin(url: string | undefined, varName: string): string
 }
 
 // REST API Base URL: https://evalnexa.onrender.com/api
-const rawApiUrl = import.meta.env.VITE_API_URL;
+const rawApiUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL;
 const validatedApiOrigin = validateBackendOrigin(rawApiUrl, 'VITE_API_URL');
 export const API_BASE_URL = validatedApiOrigin.endsWith('/api')
   ? validatedApiOrigin
   : `${validatedApiOrigin}/api`;
 
 // Socket.IO Server URL: https://evalnexa.onrender.com
-const rawSocketUrl = import.meta.env.VITE_SOCKET_URL;
+const rawSocketUrl = import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_BACKEND_URL;
 const validatedSocketOrigin = validateBackendOrigin(rawSocketUrl || rawApiUrl, 'VITE_SOCKET_URL');
 export const SOCKET_URL = validatedSocketOrigin.replace(/\/api$/, '');
+
+// Cross-panel Moderation Link
+export const MODERATION_PANEL_URL =
+  import.meta.env.VITE_MODERATION_URL ||
+  (import.meta.env.DEV ? 'http://localhost:5175' : 'https://moderation.shivasoni.me');
+
