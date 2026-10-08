@@ -5,6 +5,7 @@ import { apiClient } from '../lib/apiClient';
 import { Exam, AnswerBook, QualityStatus } from '@evalnexa/types';
 import { StatusBadge } from '../components/StatusBadge';
 import { useSocketEvents } from '../hooks/useSocketEvents';
+import { useAuth } from '../contexts/AuthContext';
 import {
   checkScanningServiceHealth,
   processPageWithOpenCVService,
@@ -33,6 +34,7 @@ export function ScanCenterPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
 
   // Workflow state
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -40,6 +42,13 @@ export function ScanCenterPage() {
   const [answerBookCode, setAnswerBookCode] = useState<string>('');
   const [studentCode, setStudentCode] = useState<string>('');
   const [expectedPageCount, setExpectedPageCount] = useState<string>('');
+
+  // Diagnostic & Fallback Controls
+  const isAdmin = user?.role === 'ADMIN' || searchParams.get('debug') === '1' || searchParams.get('debug') === 'true';
+  const [showDiagnosticHud, setShowDiagnosticHud] = useState<boolean>(false);
+  const [browserFallbackActive, setBrowserFallbackActive] = useState<boolean>(false);
+  const [isRetryingHealth, setIsRetryingHealth] = useState<boolean>(false);
+  const [sampleDimensions, setSampleDimensions] = useState<{ width: number; height: number }>({ width: 480, height: 270 });
 
   // Camera & Capture state
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -83,7 +92,12 @@ export function ScanCenterPage() {
   const [finalizedSuccessBook, setFinalizedSuccessBook] = useState<AnswerBook | null>(null);
 
   // Service health check
-  const [serviceHealth, setServiceHealth] = useState<{ connected: boolean; checked: boolean }>({
+  const [serviceHealth, setServiceHealth] = useState<{
+    connected: boolean;
+    checked: boolean;
+    url?: string;
+    error?: string;
+  }>({
     connected: false,
     checked: false,
   });
@@ -141,12 +155,23 @@ export function ScanCenterPage() {
     }
   };
 
+  const refreshServiceHealth = useCallback(async () => {
+    setIsRetryingHealth(true);
+    try {
+      const res = await checkScanningServiceHealth();
+      setServiceHealth({ connected: res.connected, checked: true, url: res.url, error: res.error });
+      if (res.connected) {
+        setBrowserFallbackActive(false);
+      }
+    } finally {
+      setIsRetryingHealth(false);
+    }
+  }, []);
+
   // Check OpenCV service health on mount
   useEffect(() => {
-    checkScanningServiceHealth().then((res) => {
-      setServiceHealth({ connected: res.connected, checked: true });
-    });
-  }, []);
+    refreshServiceHealth();
+  }, [refreshServiceHealth]);
 
   // Pre-fill from query params or defaults
   useEffect(() => {
@@ -325,6 +350,20 @@ export function ScanCenterPage() {
         offscreenCanvas.width = sampleW;
         offscreenCanvas.height = sampleH;
 
+        if (sampleDimensions.width !== sampleW || sampleDimensions.height !== sampleH) {
+          setSampleDimensions({ width: sampleW, height: sampleH });
+        }
+
+        // If remote service is offline and user has not enabled browser fallback:
+        if (!serviceHealth.connected && !browserFallbackActive) {
+          setLiveDetection({ detected: false, corners: null, documentScore: 0 });
+          setStableCount(0);
+          setDocumentReadyToCapture(false);
+          setLiveStatusText('REMOTE SCANNER OFFLINE');
+          isDetectingRef.current = false;
+          return;
+        }
+
         if (offscreenCtx) {
           offscreenCtx.drawImage(video, 0, 0, sampleW, sampleH);
         }
@@ -403,7 +442,7 @@ export function ScanCenterPage() {
       }
       isDetectingRef.current = false;
     };
-  }, [isCameraActive, step, isProcessingFrame, videoDimensions]);
+  }, [isCameraActive, step, isProcessingFrame, videoDimensions, serviceHealth.connected, browserFallbackActive]);
 
   // Map detected corner coordinates to displayed video element with object-fit: contain
   const renderedOverlay = useMemo(() => {
@@ -631,7 +670,11 @@ export function ScanCenterPage() {
         previewUrl: finalPreviewUrl,
         blob: finalBlob,
         qualityStatus: 'PASSED',
-        serviceUnavailableNotice: 'Scanning service unavailable on http://localhost:8000.',
+        serviceUnavailableNotice:
+          serviceHealth.error ||
+          (serviceHealth.url
+            ? `Remote scanning service unavailable at ${serviceHealth.url}. Processed via standalone adapter.`
+            : 'Remote scanning service not configured; processed via in-browser engine.'),
         processedImageUrl,
       });
     }
@@ -853,13 +896,153 @@ export function ScanCenterPage() {
               borderRadius: 'var(--radius-sm)',
             }}
           >
-            <div className="live-dot" style={{ backgroundColor: serviceHealth.connected ? '#10B981' : '#059669' }} />
-            <span className="label-mono" style={{ fontSize: '11px', fontWeight: 600 }}>
-              SCANNER ENGINE: {serviceHealth.connected ? 'OPENCV SERVICE (PORT 8000)' : 'IN-BROWSER (ACTIVE)'}
+            <div
+              className="live-dot"
+              style={{
+                backgroundColor: serviceHealth.connected
+                  ? '#10B981'
+                  : browserFallbackActive
+                  ? '#F59E0B'
+                  : '#EF4444',
+              }}
+            />
+            <span
+              className="label-mono"
+              style={{ fontSize: '11px', fontWeight: 600 }}
+              title={serviceHealth.error || (serviceHealth.url ? `Endpoint: ${serviceHealth.url}` : undefined)}
+            >
+              SCANNER ENGINE:{' '}
+              {serviceHealth.connected
+                ? serviceHealth.url?.includes('localhost')
+                  ? 'OPENCV SERVICE (LOCAL)'
+                  : 'REMOTE SERVICE (ONLINE)'
+                : browserFallbackActive
+                ? 'IN-BROWSER (FALLBACK)'
+                : 'REMOTE SERVICE OFFLINE'}
             </span>
           </div>
+
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              onClick={() => setShowDiagnosticHud((v) => !v)}
+              style={{
+                fontSize: '11px',
+                padding: '4px 8px',
+                background: showDiagnosticHud ? 'rgba(56, 189, 248, 0.15)' : undefined,
+                color: showDiagnosticHud ? '#0284C7' : undefined,
+                borderColor: showDiagnosticHud ? '#38BDF8' : undefined,
+              }}
+              title="Toggle production CV diagnostic telemetry"
+            >
+              {showDiagnosticHud ? 'Hide Telemetry' : 'Telemetry (Admin)'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* PHASE 8: PRODUCTION DIAGNOSTIC UI (Visible to ADMIN or ?debug=1) */}
+      {(showDiagnosticHud || (isAdmin && searchParams.get('debug') === '1')) && (
+        <div
+          style={{
+            marginBottom: 'var(--space-4)',
+            padding: '12px 16px',
+            background: 'rgba(15, 23, 42, 0.95)',
+            border: '1px solid #334155',
+            borderRadius: 'var(--radius-md)',
+            color: '#E2E8F0',
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, color: '#38BDF8', letterSpacing: '0.05em' }}>
+              🔧 SCANNER DIAGNOSTIC TELEMETRY (ADMIN / DEBUG)
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              onClick={() => refreshServiceHealth()}
+              disabled={isRetryingHealth}
+              style={{ color: '#38BDF8', fontSize: '10px', padding: '2px 6px' }}
+            >
+              {isRetryingHealth ? 'Probing...' : 'Refresh Health'}
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '6px 20px' }}>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Scanner engine: </span>
+              <strong>
+                {serviceHealth.connected
+                  ? serviceHealth.url?.includes('localhost')
+                    ? 'OPENCV (LOCAL)'
+                    : 'REMOTE'
+                  : browserFallbackActive
+                  ? 'IN-BROWSER (FALLBACK)'
+                  : 'REMOTE (OFFLINE)'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Configured scanner URL: </span>
+              <strong>{serviceHealth.url || 'None'}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Health: </span>
+              <strong style={{ color: serviceHealth.connected ? '#4ADE80' : '#F87171' }}>
+                {serviceHealth.connected ? 'ONLINE' : 'OFFLINE'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Health error: </span>
+              <strong style={{ color: serviceHealth.error ? '#FCA5A5' : '#94A3B8' }}>
+                {serviceHealth.error || 'None'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Camera resolution: </span>
+              <strong>
+                {videoRef.current && videoRef.current.videoWidth > 0
+                  ? `${videoRef.current.videoWidth} × ${videoRef.current.videoHeight}`
+                  : 'Inactive'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>CV input: </span>
+              <strong>{`${sampleDimensions.width} × ${sampleDimensions.height}`}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Document detection: </span>
+              <strong style={{ color: liveDetection.detected ? '#4ADE80' : '#FBBF24' }}>
+                {liveDetection.detected ? 'DETECTED' : 'NOT DETECTED'}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Blur score: </span>
+              <strong>
+                {currentPendingPage?.diagnostics?.blurDetected !== undefined
+                  ? currentPendingPage.diagnostics.blurDetected
+                    ? 'BLUR DETECTED'
+                    : 'CLEAR'
+                  : liveDetection.detected
+                  ? 'ANALYZING'
+                  : 'N/A'}
+                {currentPendingPage?.diagnostics?.sharpnessRaw !== undefined &&
+                  ` (Raw: ${currentPendingPage.diagnostics.sharpnessRaw})`}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94A3B8' }}>Sharpness score: </span>
+              <strong>
+                {currentPendingPage?.diagnostics?.sharpnessScore !== undefined
+                  ? `${currentPendingPage.diagnostics.sharpnessScore} / 100`
+                  : `${liveDetection.documentScore} / 100`}
+              </strong>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 4-Step Process Indicator Strip (Section 8: 1 EXAM, 2 CAPTURE, 3 QUALITY, 4 FINALIZE) */}
       <div className="process-strip" style={{ marginBottom: 'var(--space-6)' }}>
@@ -1084,6 +1267,93 @@ export function ScanCenterPage() {
             </div>
 
             <div className="folio-card__body" style={{ padding: 'var(--space-4)' }}>
+              {/* PHASE 4: Offline Notification & Explicit Fallback Control */}
+              {!serviceHealth.connected && !browserFallbackActive && (
+                <div
+                  style={{
+                    marginBottom: 'var(--space-4)',
+                    padding: '12px 16px',
+                    background: 'rgba(239, 68, 68, 0.08)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <div style={{ color: '#DC2626', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>⚠️</span> REMOTE SCANNER SERVICE OFFLINE
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: 2 }}>
+                      {serviceHealth.url ? (
+                        <>Scanner endpoint <code>{serviceHealth.url}</code> is unreachable: <span style={{ color: '#DC2626', fontWeight: 500 }}>{serviceHealth.error || 'Connection failed'}</span>.</>
+                      ) : (
+                        <span style={{ color: '#DC2626', fontWeight: 600 }}>Error: {serviceHealth.error || 'VITE_SCANNING_SERVICE_URL is not configured.'}</span>
+                      )}
+                      {' '}Automatic server document detection is disabled until reconnected or fallback is explicitly activated.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={isRetryingHealth}
+                      onClick={() => refreshServiceHealth()}
+                    >
+                      {isRetryingHealth ? 'Connecting...' : 'Retry Service'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-warning btn-sm"
+                      onClick={() => setBrowserFallbackActive(true)}
+                    >
+                      Enable In-Browser Fallback Engine
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!serviceHealth.connected && browserFallbackActive && (
+                <div
+                  style={{
+                    marginBottom: 'var(--space-4)',
+                    padding: '10px 16px',
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ fontSize: '12px', color: '#B45309' }}>
+                    <strong>IN-BROWSER CV FALLBACK ACTIVE:</strong> Running client-side document detection. Position physical document sheet clearly in view.
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs"
+                      onClick={() => refreshServiceHealth()}
+                      disabled={isRetryingHealth}
+                    >
+                      {isRetryingHealth ? 'Probing...' : 'Check Remote Service'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs"
+                      onClick={() => setBrowserFallbackActive(false)}
+                      style={{ color: '#DC2626' }}
+                    >
+                      Disable Fallback
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {cameraError ? (
                 <div
                   style={{
@@ -1494,6 +1764,11 @@ export function ScanCenterPage() {
                         {currentPendingPage.diagnostics?.sharpnessScore !== undefined
                           ? `${currentPendingPage.diagnostics.sharpnessScore} / 100`
                           : 'Verified'}
+                        {currentPendingPage.diagnostics?.sharpnessRaw !== undefined && (
+                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>
+                            (Raw: {currentPendingPage.diagnostics.sharpnessRaw})
+                          </span>
+                        )}
                       </strong>
                     </div>
 
