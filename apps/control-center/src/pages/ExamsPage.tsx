@@ -290,18 +290,18 @@ export function ExamsPage() {
                   <tr key={exam._id}>
                     <td>
                       <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--navy)' }}>{exam.title}</div>
-                      <div className="label-mono" style={{ fontSize: 12, color: '#5C5D69' }}>
+                      <div className="label-mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                         ID: {exam._id.slice(-8).toUpperCase()} · Max Marks: {exam.maximumMarks}
                       </div>
                     </td>
                     <td>
                       <span className="data-table__code">{exam.subjectCode}</span>
-                      <div style={{ fontSize: 13, marginTop: 3, color: '#2C2D35' }}>{exam.subjectName}</div>
+                      <div style={{ fontSize: 13, marginTop: 3, color: 'var(--charcoal)' }}>{exam.subjectName}</div>
                     </td>
                     <td style={{ fontWeight: 600 }}>{exam.academicSession}</td>
                     <td>
                       <span style={{ fontSize: 15, fontWeight: 700 }}>{totalScripts}</span>
-                      <span style={{ fontSize: 12, color: '#5C5D69', marginLeft: 4 }}>scripts</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>scripts</span>
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

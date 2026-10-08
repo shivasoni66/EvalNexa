@@ -3,13 +3,43 @@ import { Readable } from 'stream';
 import { config } from '../config';
 import { CloudinaryAssetMetadata } from '@evalnexa/types';
 
-// Initialize Cloudinary with environment variables
-cloudinary.config({
-  cloud_name: config.cloudinary.cloudName,
-  api_key: config.cloudinary.apiKey,
-  api_secret: config.cloudinary.apiSecret,
-  secure: true,
-});
+// Ensure Cloudinary is initialized on load if config is available
+try {
+  ensureCloudinaryConfig();
+} catch {
+  // Ignored on initial module load; validated strictly upon operation invocation
+}
+
+export function ensureCloudinaryConfig(): { cloudName: string; apiKey: string; apiSecret: string } {
+  const cloudName = (config.cloudinary.cloudName || process.env.CLOUDINARY_CLOUD_NAME || '')
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  const apiKey = (config.cloudinary.apiKey || process.env.CLOUDINARY_API_KEY || '')
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  const apiSecret = (config.cloudinary.apiSecret || process.env.CLOUDINARY_API_SECRET || '')
+    .trim()
+    .replace(/^["']|["']$/g, '');
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    const missing: string[] = [];
+    if (!cloudName) missing.push('CLOUDINARY_CLOUD_NAME');
+    if (!apiKey) missing.push('CLOUDINARY_API_KEY');
+    if (!apiSecret) missing.push('CLOUDINARY_API_SECRET');
+    throw new Error(
+      `Cloudinary configuration incomplete. Missing required environment variable(s): ${missing.join(', ')}`
+    );
+  }
+
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+
+  return { cloudName, apiKey, apiSecret };
+}
 
 export const ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -91,6 +121,17 @@ export function buildDocumentPublicId(
 }
 
 /**
+ * Builds predictable public ID for question-paper documents
+ */
+export function buildQuestionPaperPublicId(
+  examId: string,
+  paperSet: string = 'Default'
+): string {
+  const safeSet = paperSet.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  return `evalnexa/exams/${examId}/question-papers/set-${safeSet}-${Date.now()}`;
+}
+
+/**
  * Uploads a buffer directly to Cloudinary using upload_stream
  */
 export async function uploadMediaBuffer(
@@ -103,23 +144,55 @@ export async function uploadMediaBuffer(
     format?: string;
   }
 ): Promise<CloudinaryAssetMetadata> {
+  ensureCloudinaryConfig();
+
   const resourceType = options.resourceType || 'auto';
   const deliveryType = options.deliveryType || 'upload';
 
+  // Construct upload parameters:
+  // - public_id: unique asset identifier
+  // - resource_type: 'image', 'raw', or 'auto'
+  // - overwrite & invalidate: ensure fresh upload & flush CDN cache
+  // - type: Cloudinary defaults to 'upload'. Do NOT send type='upload' as it adds an unnecessary signed parameter.
+  //   Only include type if deliveryType is explicitly non-default ('authenticated' or 'private').
+  const uploadParams: Record<string, any> = {
+    public_id: options.publicId,
+    resource_type: resourceType,
+    overwrite: options.overwrite !== undefined ? options.overwrite : true,
+    invalidate: true,
+  };
+
+  if (deliveryType !== 'upload') {
+    uploadParams.type = deliveryType;
+  }
+
+  if (options.format) {
+    uploadParams.format = options.format;
+  }
+
+  // Safe diagnostic logging: report parameter names and status without exposing credentials
+  const signedParamNames = Object.keys(uploadParams)
+    .filter((k) => k !== 'resource_type')
+    .sort();
+  console.log(`[MediaService] Preparing signed Cloudinary upload for public_id: "${options.publicId}"`);
+  console.log(
+    `[MediaService] Signed parameters: [${signedParamNames.join(', ')}] | deliveryType: ${deliveryType} | timestamp: auto-generated`
+  );
+
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        public_id: options.publicId,
-        resource_type: resourceType,
-        type: deliveryType,
-        overwrite: options.overwrite !== undefined ? options.overwrite : true,
-        invalidate: true,
-        format: options.format,
-      },
+      uploadParams,
       (error, result: UploadApiResponse | undefined) => {
         if (error || !result) {
+          console.error(
+            `[MediaService] Cloudinary upload failed for public_id: "${options.publicId}". Error: ${error?.message || 'No result returned'}`
+          );
           return reject(error || new Error('Cloudinary upload returned no result'));
         }
+
+        console.log(
+          `[MediaService] Cloudinary upload succeeded for public_id: "${result.public_id}" (${result.bytes} bytes, format: ${result.format})`
+        );
 
         resolve({
           publicId: result.public_id,
@@ -159,24 +232,21 @@ export function generateAuthorizedMediaUrl(
   const resourceType = options.resourceType || 'image';
   const deliveryType = options.deliveryType || 'upload';
 
-  if (!cloudinary.config().cloud_name) {
-    cloudinary.config({
-      cloud_name: config.cloudinary.cloudName || process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: config.cloudinary.apiKey || process.env.CLOUDINARY_API_KEY,
-      api_secret: config.cloudinary.apiSecret || process.env.CLOUDINARY_API_SECRET,
-      secure: true,
-    });
-  }
+  ensureCloudinaryConfig();
 
   // Generate signed secure URL
-  const secureUrl = cloudinary.url(publicId, {
+  const urlOptions: Record<string, any> = {
     resource_type: resourceType,
-    type: deliveryType,
     format: options.format,
     sign_url: true,
     secure: true,
     expires_at: expiresTimestamp,
-  });
+  };
+  if (deliveryType !== 'upload') {
+    urlOptions.type = deliveryType;
+  }
+
+  const secureUrl = cloudinary.url(publicId, urlOptions);
 
   return {
     secureUrl,
@@ -228,12 +298,16 @@ export async function deleteMediaAsset(
   resourceType: 'image' | 'raw' | 'auto' = 'image',
   deliveryType = 'upload'
 ): Promise<boolean> {
+  ensureCloudinaryConfig();
   try {
-    const result = await cloudinary.uploader.destroy(publicId, {
+    const destroyParams: Record<string, any> = {
       resource_type: resourceType,
-      type: deliveryType,
       invalidate: true,
-    });
+    };
+    if (deliveryType !== 'upload') {
+      destroyParams.type = deliveryType;
+    }
+    const result = await cloudinary.uploader.destroy(publicId, destroyParams);
     return result.result === 'ok' || result.result === 'not found';
   } catch (error) {
     console.error(`[MediaService] Failed to delete asset ${publicId}:`, error);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { ThemeToggle } from '@evalnexa/ui';
 
 const NAV_ITEMS = [
   { label: 'DASHBOARD', to: '/dashboard' },
@@ -48,6 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="app-topbar__right">
+          <ThemeToggle />
           <div className="app-topbar__user" style={{ fontFamily: 'Cambria' }}>
             <span style={{ fontSize: 14, fontWeight: 700 }}>{user?.name}</span>
             <span className="app-topbar__role-badge" style={{ fontFamily: 'Cambria', fontSize: 11, letterSpacing: '0.08em' }}>

@@ -14,6 +14,9 @@ import {
   addAnswerBookPage,
   replaceAnswerBookPage,
   deleteAnswerBookPage,
+  updateQuestionPageMapping,
+  acceptAiPageMapping,
+  dismissAiPageMapping,
 } from '../controllers/answerBooks.controller';
 import { authenticate, authorize } from '../middleware/auth';
 import { requireIngestionKey, ingestionRateLimiter } from '../middleware/ingestionAuth';
@@ -53,6 +56,17 @@ router.get('/', authorize('ADMIN', 'MODERATOR', 'EXAMINER'), getAnswerBooks);
 router.post('/', authorize('ADMIN'), validate(createAnswerBookSchema), createAnswerBook);
 router.get('/:id', getAnswerBookById);
 router.patch('/:id', authorize('ADMIN'), updateAnswerBook);
+router.patch('/:id/question-mapping', authorize('ADMIN', 'EXAMINER'), updateQuestionPageMapping);
+router.post(
+  '/:id/questions/:questionNumber/accept-ai-mapping',
+  authorize('ADMIN', 'EXAMINER'),
+  acceptAiPageMapping
+);
+router.post(
+  '/:id/questions/:questionNumber/dismiss-ai-mapping',
+  authorize('ADMIN', 'EXAMINER'),
+  dismissAiPageMapping
+);
 router.post('/:id/assign', authorize('ADMIN'), validate(assignAnswerBookSchema), assignAnswerBook);
 router.post('/:id/finalize', authorize('ADMIN'), finalizeAnswerBookController);
 

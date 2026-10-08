@@ -14,6 +14,7 @@ import { ModerationOverviewPage } from './pages/ModerationOverviewPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { AuditPage } from './pages/AuditPage';
 import { UsersPage } from './pages/UsersPage';
+import { TimelineSimulatorPage } from './pages/TimelineSimulatorPage';
 
 export function App() {
   return (
@@ -28,6 +29,7 @@ export function App() {
               <Routes>
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
+                <Route path="timeline" element={<TimelineSimulatorPage />} />
                 <Route path="exams" element={<ExamsPage />} />
                 <Route path="exams/:id" element={<ExamDetailPage />} />
                 <Route path="answer-books" element={<AnswerBooksPage />} />

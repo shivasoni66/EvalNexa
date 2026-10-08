@@ -94,14 +94,23 @@ export const assignAnswerBookSchema = z.object({
 
 export const questionMarkSchema = z.object({
   questionNumber: z.number().int().positive(),
+  questionLabel: z.string().optional(),
+  section: z.string().optional(),
+  subquestion: z.string().optional(),
   marks: z.number().min(0),
   status: z.enum(['NOT_STARTED', 'MARKED', 'FLAGGED', 'NOT_ATTEMPTED']),
-  comment: z.string().optional(),
+  comment: z.string().nullable().optional(),
+  aiStatus: z.string().nullable().optional(),
+  aiError: z.string().nullable().optional(),
+  examinerReviewed: z.boolean().optional(),
+  reviewedAt: z.union([z.string(), z.date()]).nullable().optional(),
   aiAnalysis: z
     .object({
+      questionPaperId: z.any().optional(),
       suggestedMarks: z.number().optional(),
       minMarks: z.number().optional(),
       maxMarks: z.number().optional(),
+      questionMaxMarks: z.number().optional(),
       confidence: z.number().optional(),
       needsHumanReview: z.boolean().optional(),
       criteria: z
@@ -118,7 +127,10 @@ export const questionMarkSchema = z.object({
       reasoningSummary: z.string().optional(),
       generatedAt: z.union([z.string(), z.date()]).optional(),
       model: z.string().optional(),
+      mappedPages: z.array(z.number()).optional(),
+      questionTextHash: z.string().optional(),
     })
+    .nullable()
     .optional(),
 });
 

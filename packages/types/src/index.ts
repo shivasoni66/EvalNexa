@@ -137,14 +137,37 @@ export interface AnswerBook {
   };
   assignedExaminerId?: string | User;
   questionPageMapping?: QuestionPageMapping[];
+  questionPaperId?: string | QuestionPaper;
+  paperSet?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface QuestionPageMapping {
   questionNumber: number;
+  questionLabel?: string;
   pages: number[];
+  mappedPages?: number[];
   verified?: boolean;
+  confidence?: number;
+  mappingConfidence?: number;
+  reason?: string;
+  evidence?: string[];
+  needsHumanReview?: boolean;
+  source?:
+    | 'AUTO_EXPLICIT'
+    | 'AUTO_SEMANTIC'
+    | 'AUTO_MULTIMODAL'
+    | 'AUTO_CONTINUATION'
+    | 'AI_SUGGESTED'
+    | 'EXAMINER_VERIFIED';
+  mappingSource?: string;
+  examinerVerified?: boolean;
+  isContinuation?: boolean;
+  mappingAlgorithmVersion?: string;
+  aiSuggestedPages?: number[];
+  aiConfidence?: number;
+  aiReason?: string;
 }
 
 // --- Evaluation Status ---
@@ -159,10 +182,49 @@ export type EvaluationStatus =
 // --- Question Marking Status ---
 export type QuestionMarkStatus = 'NOT_STARTED' | 'MARKED' | 'FLAGGED' | 'NOT_ATTEMPTED';
 
+// --- AI Analysis States ---
+export type QuestionAiAnalysisStatus =
+  | 'NOT_STARTED'
+  | 'QUEUED'
+  | 'ANALYZING'
+  | 'COMPLETED'
+  | 'NEEDS_REVIEW'
+  | 'FAILED';
+
+export type FullAnalysisJobStatus =
+  | 'NOT_STARTED'
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'PARTIAL'
+  | 'COMPLETED'
+  | 'COMPLETED_WITH_REVIEW'
+  | 'COMPLETED_WITH_ERRORS'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface FullAnalysisJob {
+  jobId: string;
+  status: FullAnalysisJobStatus;
+  questionPaperId?: string;
+  totalQuestions: number;
+  completedQuestions: number;
+  failedQuestions: number;
+  needsReviewQuestions: number;
+  totalPages: number;
+  analyzedPages: number;
+  currentStep?: string;
+  currentQuestionNumber?: number;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+}
+
 export interface QuestionMarkAiAnalysis {
+  questionPaperId?: string;
   suggestedMarks: number;
   minMarks: number;
   maxMarks: number;
+  questionMaxMarks?: number;
   confidence: number;
   needsHumanReview: boolean;
   criteria: Array<{
@@ -175,14 +237,23 @@ export interface QuestionMarkAiAnalysis {
   reasoningSummary: string;
   generatedAt: string;
   model: string;
+  mappedPages?: number[];
+  questionTextHash?: string;
 }
 
 export interface QuestionMarkItem {
   questionNumber: number;
+  questionLabel?: string;
+  section?: string;
+  subquestion?: string;
   marks: number;
   status: QuestionMarkStatus;
   comment?: string;
+  aiStatus?: QuestionAiAnalysisStatus;
+  aiError?: string;
   aiAnalysis?: QuestionMarkAiAnalysis;
+  examinerReviewed?: boolean;
+  reviewedAt?: string;
 }
 
 // --- Evaluation ---
@@ -192,8 +263,10 @@ export interface Evaluation {
   examinerId: string | User;
   status: EvaluationStatus;
   totalMarks?: number;
+  totalPossibleMarks?: number;
   remarks?: string;
   questionMarks?: QuestionMarkItem[];
+  fullAnalysisJob?: FullAnalysisJob;
   startedAt?: string;
   submittedAt?: string;
   createdAt: string;
@@ -210,6 +283,9 @@ export interface Question {
   _id: string;
   examId: string | Exam;
   questionNumber: number;
+  questionLabel?: string;
+  section?: string;
+  subquestion?: string;
   text: string;
   maximumMarks: number;
   rubric: QuestionRubricItem[];
@@ -217,6 +293,46 @@ export interface Question {
   keyConcepts?: string[];
   gradingNotes?: string;
   evaluationLanguage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// --- Question Paper ---
+export type QuestionPaperStatus = 'NOT_EXTRACTED' | 'EXTRACTED' | 'VERIFIED' | 'ERROR';
+
+export interface ExtractedQuestion {
+  questionNumber: number;
+  questionLabel?: string;
+  section?: string;
+  subquestion?: string;
+  text: string;
+  maximumMarks: number;
+  rubric?: QuestionRubricItem[];
+  referenceAnswer?: string;
+  choice?: string;
+  verified?: boolean;
+}
+
+export interface QuestionPaper {
+  _id: string;
+  examId: string | Exam;
+  paperSet: string;
+  originalFileName: string;
+  cloudinaryPublicId: string;
+  secureUrl?: string;
+  resourceType: string;
+  format?: string;
+  pageCount: number;
+  processingStatus: 'RECEIVED' | 'PROCESSING' | 'COMPLETED' | 'ERROR';
+  extractionStatus: QuestionPaperStatus;
+  rawOcrText?: string;
+  extractedQuestions: ExtractedQuestion[];
+  verifiedQuestions: ExtractedQuestion[];
+  totalQuestions: number;
+  maximumMarks: number;
+  verifiedBy?: string | User;
+  verifiedAt?: string;
+  createdBy: string | User;
   createdAt: string;
   updatedAt: string;
 }
@@ -401,6 +517,10 @@ export type SocketEvent =
   | 'evaluation.updated'
   | 'evaluation.submitted'
   | 'evaluation.ai.updated'
+  | 'ai.full-analysis.started'
+  | 'ai.full-analysis.progress'
+  | 'ai.full-analysis.completed'
+  | 'answerbook.mapping.updated'
   | 'moderation.approved'
   | 'moderation.returned'
   | 'result.finalized'

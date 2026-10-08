@@ -26,7 +26,7 @@ export function ReviewQueuePage() {
       const { data } = await apiClient.get(url);
       return data.data;
     },
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
 
   // Real-time synchronization
@@ -339,9 +339,9 @@ export function ReviewQueuePage() {
                           <span style={{ fontFamily: 'Cambria, serif', fontSize: 16, fontWeight: 700, color: 'var(--parchment-navy)' }}>
                             {ev.totalMarks ?? 0}
                           </span>
-                          {exam && (
+                          {(ev.totalPossibleMarks || exam?.maximumMarks) && (
                             <span className="label-mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                              {' '}/ {exam.maximumMarks}
+                              {' '}/ {ev.totalPossibleMarks || exam?.maximumMarks}
                             </span>
                           )}
                         </td>

@@ -7,11 +7,10 @@ export async function connectDatabase(): Promise<void> {
   }
 
   try {
-    await mongoose.connect(config.mongoUri);
+    await mongoose.connect(config.mongoUri, { serverSelectionTimeoutMS: 3000 });
     console.log('[DB] MongoDB connected successfully');
   } catch (error) {
-    console.error('[DB] MongoDB connection failed:', error);
-    process.exit(1);
+    console.warn(`[DB] Could not connect to MongoDB at ${config.mongoUri}. Continuing in offline fallback mode.`);
   }
 }
 

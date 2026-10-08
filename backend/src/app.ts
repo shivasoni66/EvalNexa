@@ -15,6 +15,7 @@ import moderationRoutes from './routes/moderation.routes';
 import questionsRoutes from './routes/questions.routes';
 import auditRoutes from './routes/audit.routes';
 import resultsRoutes from './routes/results.routes';
+import questionPapersRoutes from './routes/questionPapers.routes';
 
 const app = express();
 
@@ -33,7 +34,13 @@ app.use(cookieParser());
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'EvalNexa API', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    service: 'EvalNexa API',
+    commit: process.env.RENDER_GIT_COMMIT || 'dev',
+    branch: process.env.RENDER_GIT_BRANCH || 'local',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // API routes
@@ -47,6 +54,8 @@ app.use('/api/moderation', moderationRoutes);
 app.use('/api/moderations', moderationRoutes);
 app.use('/api/results', resultsRoutes);
 app.use('/api/audit-logs', auditRoutes);
+app.use('/api/question-papers', questionPapersRoutes);
+app.use('/question-papers', questionPapersRoutes);
 
 // Error handling
 app.use(notFound);

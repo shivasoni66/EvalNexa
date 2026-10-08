@@ -4,6 +4,7 @@ import { apiClient } from '../lib/apiClient';
 import { Evaluation, AnswerBook, Exam, User, ModeratorDashboardStats } from '@evalnexa/types';
 import { StatusBadge } from '../components/StatusBadge';
 import { useSocketEvents } from '../hooks/useSocketEvents';
+import { MODERATION_PANEL_URL } from '../lib/config';
 
 export function ModerationOverviewPage() {
   const queryClient = useQueryClient();
@@ -63,13 +64,13 @@ export function ModerationOverviewPage() {
         </div>
         <div className="page-header__actions">
           <a
-            href="http://localhost:5175"
+            href={MODERATION_PANEL_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary"
             style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            Open Moderation Center (Port 5175) ↗
+            Open Moderation Center ↗
           </a>
         </div>
       </div>
@@ -193,7 +194,7 @@ export function ModerationOverviewPage() {
                         </td>
                         <td style={{ textAlign: 'right' }}>
                           <a
-                            href="http://localhost:5175"
+                            href={MODERATION_PANEL_URL}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn btn-secondary btn-sm"

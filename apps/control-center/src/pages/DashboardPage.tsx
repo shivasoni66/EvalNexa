@@ -132,13 +132,23 @@ export function DashboardPage() {
   return (
     <div>
       {/* Page Title (Section 3) */}
-      <div className="page-header" style={{ marginBottom: 'var(--space-6)' }}>
+      <div className="page-header" style={{ marginBottom: 'var(--space-6)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
         <div>
           <div className="page-header__eyebrow">EVALNEXA · EXAMINATION OPERATIONS</div>
           <h1 className="page-header__title">Examination Control Center</h1>
           <p className="page-header__subtitle">
             Central console driving physical script scanning, quality verification, examiner allocation, and live evaluation telemetry.
           </p>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+          <Link
+            to="/timeline"
+            className="btn btn-secondary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}
+          >
+            <span>⏱</span>
+            <span>Timeline Simulator</span>
+          </Link>
         </div>
       </div>
 
@@ -306,9 +316,9 @@ export function DashboardPage() {
         style={{
           marginBottom: 'var(--space-6)',
           padding: 'var(--space-6)',
-          background: 'linear-gradient(180deg, #FCFAF6 0%, #F5EFE4 100%)',
+          background: 'var(--card-bg)',
           border: '2px solid var(--gold)',
-          boxShadow: '0 4px 16px rgba(158, 122, 56, 0.12)',
+          boxShadow: 'var(--card-shadow)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
@@ -316,10 +326,10 @@ export function DashboardPage() {
             <div className="label-caps" style={{ color: 'var(--gold)', letterSpacing: '0.12em', marginBottom: 4 }}>
               Primary Examination Operation
             </div>
-            <div style={{ fontSize: '26px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: '"Cambria"' }}>
+            <div style={{ fontSize: '26px', fontWeight: 700, color: 'var(--ink)', fontFamily: '"Cambria"' }}>
               Digital Script Capture & Ingestion
             </div>
-            <div style={{ fontSize: 'var(--text-body)', color: 'var(--text-secondary)', marginTop: 4, maxWidth: 600 }}>
+            <div style={{ fontSize: 'var(--text-body)', color: 'var(--text-muted)', marginTop: 4, maxWidth: 600 }}>
               Launch the Scan Center to access browser camera feeds, capture physical answer sheets, and run quality/blur verification.
             </div>
           </div>
@@ -332,10 +342,7 @@ export function DashboardPage() {
               style={{
                 fontSize: '18px',
                 padding: '14px 28px',
-                background: 'var(--navy)',
-                color: '#FAF8F5',
                 border: '1px solid var(--gold)',
-                boxShadow: '0 2px 8px rgba(14, 26, 43, 0.25)',
                 textDecoration: 'none',
                 display: 'inline-flex',
                 alignItems: 'center',

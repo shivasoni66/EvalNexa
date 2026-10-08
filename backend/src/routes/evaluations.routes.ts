@@ -6,6 +6,11 @@ import {
   updateEvaluation,
   submitEvaluation,
   getAIEvaluationSuggestion,
+  startFullAnalysisController,
+  getFullAnalysisStatusController,
+  cancelFullAnalysisController,
+  retryQuestionAnalysisController,
+  markQuestionReviewedController,
 } from '../controllers/evaluations.controller';
 import { authenticate, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -46,6 +51,40 @@ router.post(
   aiAssistantLimiter,
   authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
   getAIEvaluationSuggestion
+);
+
+// One-Click Full Answer Book AI Analysis (Asynchronous background processing)
+router.post(
+  '/:id/ai/full-analysis',
+  aiAssistantLimiter,
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  startFullAnalysisController
+);
+router.get(
+  '/:id/ai/full-analysis',
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  getFullAnalysisStatusController
+);
+router.get(
+  '/:id/ai/full-analysis/status',
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  getFullAnalysisStatusController
+);
+router.post(
+  '/:id/ai/full-analysis/cancel',
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  cancelFullAnalysisController
+);
+router.post(
+  '/:id/ai/questions/:questionNumber/retry',
+  aiAssistantLimiter,
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  retryQuestionAnalysisController
+);
+router.post(
+  '/:id/questions/:questionNumber/review',
+  authorize('EXAMINER', 'MODERATOR', 'ADMIN'),
+  markQuestionReviewedController
 );
 
 export default router;

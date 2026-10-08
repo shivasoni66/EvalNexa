@@ -9,6 +9,7 @@ import { User } from '../models/User';
 import { AnswerBookStatus, ProcessingStatus, QualityStatus } from '@evalnexa/types';
 import { logAuditAction } from './audit.service';
 import { emitToAll, emitToUser } from '../sockets';
+import { normalizeEntityId, areEntityIdsEqual } from '../utils/identity';
 
 const VALID_TRANSITIONS: Record<AnswerBookStatus, AnswerBookStatus[]> = {
   READY: ['ASSIGNED'],
@@ -86,7 +87,8 @@ export async function fetchExaminerAnswerBooks(userId: string, status?: string) 
 export async function fetchAnswerBookById(id: string, userRole: string, userId: string) {
   const answerBook = await AnswerBook.findById(id)
     .populate('examId', 'title subjectCode subjectName maximumMarks totalQuestions')
-    .populate('assignedExaminerId', 'name email');
+    .populate('assignedExaminerId', 'name email')
+    .populate('questionPaperId');
 
   if (!answerBook) {
     const error: any = new Error('Answer book not found');
@@ -95,10 +97,31 @@ export async function fetchAnswerBookById(id: string, userRole: string, userId: 
     throw error;
   }
 
-  if (
-    userRole === 'EXAMINER' &&
-    answerBook.assignedExaminerId?.toString() !== userId
-  ) {
+  const normalizedAssignedExaminerId = normalizeEntityId(answerBook.assignedExaminerId);
+  const normalizedUserId = normalizeEntityId(userId);
+  const isMatch = Boolean(
+    normalizedAssignedExaminerId &&
+    normalizedUserId &&
+    normalizedAssignedExaminerId === normalizedUserId
+  );
+
+  // Safe diagnostic logging (no JWTs, passwords, secrets, or headers)
+  const isRejected = userRole === 'EXAMINER' && !isMatch;
+  console.log('[Diagnostic:fetchAnswerBookById]', {
+    requestAnswerBookId: id,
+    authenticatedUserId: userId,
+    authenticatedUserRole: userRole,
+    rawAssignedExaminerIdType: typeof answerBook.assignedExaminerId,
+    assignedExaminerValue: (answerBook.assignedExaminerId as any)?._id
+      ? String((answerBook.assignedExaminerId as any)._id)
+      : String(answerBook.assignedExaminerId),
+    normalizedAssignedExaminerId,
+    normalizedAuthenticatedUserId: normalizedUserId,
+    isMatch,
+    decision: isRejected ? 'REJECTED: NOT_ASSIGNED' : 'AUTHORIZED',
+  });
+
+  if (isRejected) {
     const error: any = new Error('Access denied: Answer book is not assigned to you');
     error.status = 403;
     error.code = 'ACCESS_DENIED';

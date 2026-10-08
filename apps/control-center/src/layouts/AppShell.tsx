@@ -1,11 +1,13 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { ThemeToggle } from '@evalnexa/ui';
 
 // 7 Essential Operational Navigation Items in strict lifecycle order (Sections 1 & 2):
 // SETUP → SCAN → VERIFY → ASSIGN → MONITOR → RESULT
 const NAV_ITEMS = [
   { label: 'Dashboard', to: '/dashboard' },
+  { label: 'Timeline Simulator', to: '/timeline' },
   { label: 'Examinations', to: '/exams' },
   { label: 'Scan Center', to: '/scan-center' },
   { label: 'Digital Scripts', to: '/answer-books' },
@@ -47,6 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="app-topbar__right">
+          <ThemeToggle />
           <div className="app-topbar__user">
             <span>{user?.name || 'Administrator'}</span>
             <span className="app-topbar__role-badge">{user?.role || 'ADMIN'}</span>

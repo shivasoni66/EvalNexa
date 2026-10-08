@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./EvalNexa/apps/control-center" },
+    { "path": "./EvalNexa/apps/examiner" },
+    { "path": "./EvalNexa/apps/moderation" },
+    { "path": "./EvalNexa/backend" },
+    { "path": "./EvalNexa/packages/types" },
+    { "path": "./EvalNexa/packages/ui" }
+  ]
+}
