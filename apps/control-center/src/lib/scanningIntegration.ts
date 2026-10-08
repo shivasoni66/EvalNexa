@@ -7,11 +7,15 @@
  */
 
 import { QualityStatus, AnswerBookStatus } from '@evalnexa/types';
+import { getScanningServiceConfig, getScanningServiceUrl } from './config';
+
+export { getScanningServiceConfig, getScanningServiceUrl };
 
 export interface PageQualityDiagnostics {
   status: 'PASSED' | 'RESCAN_REQUIRED' | 'PENDING' | 'HUMAN_REVIEW';
   blurDetected?: boolean;
   sharpnessScore?: number;
+  sharpnessRaw?: number;
   orientation?: string;
   pageDetected?: boolean;
   cropReady?: boolean;
@@ -58,34 +62,59 @@ export function dataUriToBlob(dataUri: string): Blob {
   return new Blob([uint8Array], { type: mime });
 }
 
-const DEFAULT_SCANNING_SERVICE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCANNING_SERVICE_URL) ||
-  'http://localhost:8000';
-
 /**
- * Checks connectivity to the friend's OpenCV scanning service.
+ * Checks connectivity to the scanning service.
+ * In development: Checks configured URL or http://localhost:8000.
+ * In production: Requires VITE_SCANNING_SERVICE_URL with HTTPS; returns clear configuration error if missing.
  */
 export async function checkScanningServiceHealth(
-  serviceUrl = DEFAULT_SCANNING_SERVICE_URL
-): Promise<{ connected: boolean; url: string; error?: string }> {
-  try {
-    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    if (isHttps && serviceUrl.startsWith('http://')) {
-      return { connected: false, url: serviceUrl, error: 'Insecure HTTP scanning endpoint blocked on HTTPS origin' };
-    }
+  overrideUrl?: string
+): Promise<{ connected: boolean; url: string; error?: string; status?: number }> {
+  const config = getScanningServiceConfig();
+  const serviceUrl = (overrideUrl !== undefined ? overrideUrl : config.url)?.trim();
 
+  if (!serviceUrl) {
+    return {
+      connected: false,
+      url: '',
+      error: config.error || 'VITE_SCANNING_SERVICE_URL is not configured.',
+    };
+  }
+
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  if (isHttps && serviceUrl.startsWith('http://')) {
+    return {
+      connected: false,
+      url: serviceUrl,
+      error: 'Insecure HTTP scanning endpoint blocked on HTTPS origin. Remote service must use HTTPS.',
+    };
+  }
+
+  try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1800);
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
     const res = await fetch(`${serviceUrl}/health`, {
       method: 'GET',
       signal: controller.signal,
-    }).catch(() => null);
+    }).catch((err) => ({
+      fetchError: err?.name === 'AbortError' ? 'Connection timed out (2.5s)' : (err?.message || 'Connection refused / network error'),
+    }));
     clearTimeout(timeoutId);
 
-    if (res && res.ok) {
-      return { connected: true, url: serviceUrl };
+    if (res && 'status' in res) {
+      if (res.ok) {
+        return { connected: true, url: serviceUrl, status: res.status };
+      }
+      const errDetail = res.status === 404
+        ? '404 Not Found (scanner service not deployed or route missing on Render)'
+        : `Scanning service returned HTTP ${res.status}`;
+      return { connected: false, url: serviceUrl, error: errDetail, status: res.status };
     }
-    return { connected: false, url: serviceUrl, error: 'Service returned non-200 status' };
+    return {
+      connected: false,
+      url: serviceUrl,
+      error: (res as any)?.fetchError || 'Connection failed',
+    };
   } catch (err: any) {
     return { connected: false, url: serviceUrl, error: err?.message || 'Connection refused' };
   }
@@ -107,12 +136,15 @@ export interface LiveDocumentDetection {
 export async function detectDocumentPreview(
   frameBlob: Blob,
   signal?: AbortSignal,
-  serviceUrl = DEFAULT_SCANNING_SERVICE_URL
+  overrideUrl?: string
 ): Promise<LiveDocumentDetection> {
-  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isInsecureLocalhost = isHttps && serviceUrl.startsWith('http://');
+  const config = getScanningServiceConfig();
+  const serviceUrl = (overrideUrl !== undefined ? overrideUrl : config.url)?.trim();
 
-  if (!isInsecureLocalhost) {
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const isValidRemoteTarget = Boolean(serviceUrl && !(isHttps && serviceUrl.startsWith('http://')));
+
+  if (isValidRemoteTarget && serviceUrl) {
     try {
       const formData = new FormData();
       formData.append('file', frameBlob, 'preview_frame.jpg');
@@ -161,12 +193,15 @@ export async function processPageWithOpenCVService(
     captureWidth?: number;
     captureHeight?: number;
   },
-  serviceUrl = DEFAULT_SCANNING_SERVICE_URL
+  overrideUrl?: string
 ): Promise<ProcessPageResult> {
-  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isInsecureLocalhost = isHttps && serviceUrl.startsWith('http://');
+  const config = getScanningServiceConfig();
+  const serviceUrl = (overrideUrl !== undefined ? overrideUrl : config.url)?.trim();
 
-  if (!isInsecureLocalhost) {
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const isValidRemoteTarget = Boolean(serviceUrl && !(isHttps && serviceUrl.startsWith('http://')));
+
+  if (isValidRemoteTarget && serviceUrl) {
     try {
       const formData = new FormData();
       formData.append('file', imageBlob, meta.filename || `page_${meta.pageNumber}.jpg`);
@@ -265,13 +300,32 @@ export async function processPageWithOpenCVService(
 }
 
 /**
+ * Normalizes raw Laplacian variance into a 0-100 quality score.
+ * Matches ai-eval-scanner/pipeline.py compute_sharpness_score:
+ * - Variance < 55.0 indicates optical blur / defocus (flagged as blur, score 5.0 - 54.9).
+ * - Variance >= 55.0 indicates sharp document (score 55.0 - 99.5).
+ */
+export function computeNormalizedSharpness(laplacianVariance: number): { score: number; blurDetected: boolean } {
+  const v = Math.max(0, laplacianVariance);
+  if (v < 55.0) {
+    const score = Math.max(5.0, Math.min(54.9, (v / 55.0) * 50.0));
+    return { score: Math.round(score * 10) / 10, blurDetected: true };
+  }
+  const progress = Math.min(1.0, (v - 55.0) / 945.0);
+  const score = 55.0 + progress * 44.5;
+  return { score: Math.round(score * 10) / 10, blurDetected: false };
+}
+
+/**
  * Real client-side Computer Vision analyzer using HTML5 Canvas & Laplacian Convolution.
  * Replicates OpenCV's cv2.Laplacian(img, cv2.CV_64F).var() directly in browser memory.
+ * Returns normalized 0-100 sharpness score alongside raw Laplacian variance.
  */
 export function analyzePageWithCanvas(
   canvas: HTMLCanvasElement
 ): {
   sharpnessScore: number;
+  sharpnessRaw: number;
   blurDetected: boolean;
   pageDetected: boolean;
   cropReady: boolean;
@@ -280,7 +334,7 @@ export function analyzePageWithCanvas(
 } {
   const ctx = canvas.getContext('2d');
   if (!ctx) {
-    return { sharpnessScore: 100, blurDetected: false, pageDetected: true, cropReady: true, status: 'PASSED' };
+    return { sharpnessScore: 100, sharpnessRaw: 500, blurDetected: false, pageDetected: true, cropReady: true, status: 'PASSED' };
   }
 
   const { width, height } = canvas;
@@ -291,7 +345,7 @@ export function analyzePageWithCanvas(
   offscreen.height = sampleH;
   const offCtx = offscreen.getContext('2d');
   if (!offCtx) {
-    return { sharpnessScore: 100, blurDetected: false, pageDetected: true, cropReady: true, status: 'PASSED' };
+    return { sharpnessScore: 100, sharpnessRaw: 500, blurDetected: false, pageDetected: true, cropReady: true, status: 'PASSED' };
   }
 
   offCtx.drawImage(canvas, 0, 0, sampleW, sampleH);
@@ -326,17 +380,18 @@ export function analyzePageWithCanvas(
 
   const mean = sumL / count;
   const variance = Math.max(0, sumL2 / count - mean * mean);
-  const sharpnessScore = Math.round(variance * 10) / 10;
+  const sharpnessRaw = Math.round(variance * 10) / 10;
+  const { score: sharpnessScore, blurDetected } = computeNormalizedSharpness(variance);
 
   // Threshold: variance < 55 indicates motion blur or defocus
-  const blurDetected = variance < 55;
   const status: 'PASSED' | 'RESCAN_REQUIRED' = blurDetected ? 'RESCAN_REQUIRED' : 'PASSED';
   const reason = blurDetected
-    ? `Laplacian sharpness variance (${sharpnessScore}) is below minimum threshold (55.0). Recapture with better focus.`
+    ? `Laplacian sharpness (${sharpnessScore} / 100, raw variance: ${sharpnessRaw}) is below minimum threshold (55.0). Recapture with better focus.`
     : undefined;
 
   return {
     sharpnessScore,
+    sharpnessRaw,
     blurDetected,
     pageDetected: true,
     cropReady: true,
@@ -372,9 +427,12 @@ async function loadImageFromBlob(blob: Blob): Promise<CanvasImageSource & { widt
 }
 
 /**
- * Client-side document quadrilateral detection.
- * Analyzes contrast, luminance distribution, and boundary gradients to localize
- * the 4 corners of a physical document sheet directly in browser memory (< 5ms).
+ * Client-side physical document quadrilateral detector and non-document rejector.
+ * Implements the validation criteria from ai-eval-scanner/document_scanner.py:
+ * - Rejects human faces, skin, clothing, and background walls via substrate neutrality & saturation tests
+ * - Validates quadrilateral geometry: aspect ratio [0.35, 2.6], opposite edge symmetry (diff <= 32%),
+ *   and all 4 corner angles between 55° and 125°.
+ * - Rejects non-document regions, tracking border frames, or degenerate shapes.
  */
 export async function detectDocumentPreviewClientSide(
   frameBlob: Blob
@@ -387,7 +445,7 @@ export async function detectDocumentPreviewClientSide(
       return { detected: false, corners: null, documentScore: 0 };
     }
 
-    // Downsample to 320px width for fast execution
+    // Downsample to 320px width for fast execution (~3ms)
     const sampleW = 320;
     const sampleH = Math.max(120, Math.round((sampleW / origW) * origH));
     const canvas = document.createElement('canvas');
@@ -400,26 +458,36 @@ export async function detectDocumentPreviewClientSide(
     const imgData = ctx.getImageData(0, 0, sampleW, sampleH);
     const data = imgData.data;
 
-    // 1. Compute grayscale & stats
+    // 1. Compute grayscale luminance, saturation, and statistics
     const totalPixels = sampleW * sampleH;
     const gray = new Float32Array(totalPixels);
+    const sat = new Float32Array(totalPixels);
     let sumL = 0;
     let sumL2 = 0;
+
     for (let i = 0; i < data.length; i += 4) {
-      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       const idx = i / 4;
       gray[idx] = lum;
       sumL += lum;
       sumL2 += lum * lum;
+
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      sat[idx] = maxC === 0 ? 0 : (maxC - minC) / maxC;
     }
     const meanL = sumL / totalPixels;
     const stdL = Math.sqrt(Math.max(0, sumL2 / totalPixels - meanL * meanL));
 
-    // Threshold: Paper documents are usually brighter than desk surface
-    const lumThresh = Math.max(75, Math.min(225, meanL + 0.12 * stdL));
+    // Paper sheets are bright white/off-white with LOW saturation
+    // Reject skin, clothing, and colored surfaces by requiring low saturation (<= 0.22)
+    const lumThresh = Math.max(80, Math.min(220, meanL + 0.15 * stdL));
 
-    const marginX = Math.max(4, Math.round(sampleW * 0.03));
-    const marginY = Math.max(4, Math.round(sampleH * 0.03));
+    const marginX = Math.max(6, Math.round(sampleW * 0.04));
+    const marginY = Math.max(6, Math.round(sampleH * 0.04));
 
     let minSum = Infinity;
     let maxSum = -Infinity;
@@ -438,11 +506,10 @@ export async function detectDocumentPreviewClientSide(
       for (let x = marginX; x < sampleW - marginX; x += step) {
         const idx = y * sampleW + x;
         const val = gray[idx];
+        const pixelSat = sat[idx];
 
-        // Gradient magnitude against neighboring pixels
-        const gx = Math.abs(gray[idx + 1] - gray[idx - 1]);
-        const gy = Math.abs(gray[idx + sampleW] - gray[idx - sampleW]);
-        const isDocPixel = val >= lumThresh || (gx + gy > 30 && val > meanL * 0.75);
+        // Physical document criteria: Bright paper surface AND neutral color (not skin/clothing/wall)
+        const isDocPixel = val >= lumThresh && pixelSat < 0.22;
 
         if (isDocPixel) {
           candidateCount++;
@@ -472,16 +539,204 @@ export async function detectDocumentPreviewClientSide(
     const sampledTotal = ((sampleW - 2 * marginX) * (sampleH - 2 * marginY)) / (step * step);
     const coverage = candidateCount / Math.max(1, sampledTotal);
 
-    // Document area must cover reasonable fraction of the viewfinder (12% to 94%)
-    if (coverage < 0.12 || coverage > 0.95) {
+    // Document area must cover sensible viewfinder fraction (12% to 85%)
+    if (coverage < 0.12 || coverage > 0.85) {
       return {
         detected: false,
         corners: null,
         documentScore: 0,
         imageWidth: origW,
         imageHeight: origH,
-        reason: coverage < 0.12 ? 'Position document inside camera view' : 'Document too close to frame boundary',
+        reason: coverage < 0.12 ? 'Position physical document inside camera view' : 'Document too close to frame boundary',
       };
+    }
+
+    // --- STRICT QUADRILATERAL VALIDATION (from document_scanner.py) ---
+    const pts = [tl, tr, br, bl];
+
+    // Check 1: Sensor border margin (reject if 3 or more corners touch outer sensor boundary)
+    const sensorBorderMargin = 8;
+    let borderTouchCount = 0;
+    for (const p of pts) {
+      if (
+        p.x <= sensorBorderMargin ||
+        p.x >= sampleW - sensorBorderMargin ||
+        p.y <= sensorBorderMargin ||
+        p.y >= sampleH - sensorBorderMargin
+      ) {
+        borderTouchCount++;
+      }
+    }
+    if (borderTouchCount >= 3) {
+      return {
+        detected: false,
+        corners: null,
+        documentScore: 0,
+        imageWidth: origW,
+        imageHeight: origH,
+        reason: 'Quadrilateral tracks camera frame boundary rather than document',
+      };
+    }
+
+    // Check 2: Edge lengths and opposite-edge symmetry
+    const wTop = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+    const wBot = Math.hypot(br.x - bl.x, br.y - bl.y);
+    const hLeft = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+    const hRight = Math.hypot(br.x - tr.x, br.y - tr.y);
+
+    const avgW = (wTop + wBot) / 2;
+    const avgH = (hLeft + hRight) / 2;
+
+    if (avgW < sampleW * 0.22 || avgH < sampleH * 0.22) {
+      return {
+        detected: false,
+        corners: null,
+        documentScore: 0,
+        imageWidth: origW,
+        imageHeight: origH,
+        reason: 'Document dimensions too small',
+      };
+    }
+
+    const diffW = Math.abs(wTop - wBot) / Math.max(wTop, wBot);
+    const diffH = Math.abs(hLeft - hRight) / Math.max(hLeft, hRight);
+    if (diffW > 0.32 || diffH > 0.32) {
+      return {
+        detected: false,
+        corners: null,
+        documentScore: 0,
+        imageWidth: origW,
+        imageHeight: origH,
+        reason: 'Non-symmetric boundary: opposite edges differ excessively',
+      };
+    }
+
+    // Check 3: Aspect ratio [0.35, 2.6]
+    const aspect = avgW / Math.max(1, avgH);
+    if (aspect < 0.35 || aspect > 2.6) {
+      return {
+        detected: false,
+        corners: null,
+        documentScore: 0,
+        imageWidth: origW,
+        imageHeight: origH,
+        reason: `Invalid document aspect ratio (${aspect.toFixed(2)})`,
+      };
+    }
+
+    // Check 4: Corner angles (must be approximately rectangular: 55° to 125°)
+    // Rejects human faces, heads, bodies, furniture, and random shapes
+    for (let i = 0; i < 4; i++) {
+      const prev = pts[(i + 3) % 4];
+      const curr = pts[i];
+      const next = pts[(i + 1) % 4];
+
+      const v1x = prev.x - curr.x;
+      const v1y = prev.y - curr.y;
+      const v2x = next.x - curr.x;
+      const v2y = next.y - curr.y;
+
+      const norm1 = Math.hypot(v1x, v1y);
+      const norm2 = Math.hypot(v2x, v2y);
+      if (norm1 < 1e-4 || norm2 < 1e-4) {
+        return { detected: false, corners: null, documentScore: 0, reason: 'Degenerate corner geometry' };
+      }
+
+      const dot = v1x * v2x + v1y * v2y;
+      const cosA = Math.max(-1, Math.min(1, dot / (norm1 * norm2)));
+      const angleDeg = (Math.acos(cosA) * 180) / Math.PI;
+
+      if (angleDeg < 55 || angleDeg > 125) {
+        return {
+          detected: false,
+          corners: null,
+          documentScore: 0,
+          imageWidth: origW,
+          imageHeight: origH,
+          reason: `Non-rectangular corner angle (${angleDeg.toFixed(1)}° at corner ${i})`,
+        };
+      }
+    }
+
+    // Check 5: Interior Substrate Verification (rejects skin, face, clothing, and background walls)
+    // Sample an interior grid inside the candidate quadrilateral
+    let interiorLumSum = 0;
+    let interiorSatSum = 0;
+    let darkPixelCount = 0;
+    let samplePointsCount = 0;
+    const quadLums = [0, 0, 0, 0];
+    const quadCounts = [0, 0, 0, 0];
+
+    for (let v = 0.2; v <= 0.8; v += 0.1) {
+      for (let u = 0.2; u <= 0.8; u += 0.1) {
+        // Bilinear interpolation inside quadrilateral
+        const topX = tl.x + u * (tr.x - tl.x);
+        const topY = tl.y + u * (tr.y - tl.y);
+        const botX = bl.x + u * (br.x - bl.x);
+        const botY = bl.y + u * (br.y - bl.y);
+        const px = Math.round(topX + v * (botX - topX));
+        const py = Math.round(topY + v * (botY - topY));
+
+        if (px >= 0 && px < sampleW && py >= 0 && py < sampleH) {
+          const idx = py * sampleW + px;
+          const lum = gray[idx];
+          const s = sat[idx];
+
+          interiorLumSum += lum;
+          interiorSatSum += s;
+          samplePointsCount++;
+
+          if (lum < 65) darkPixelCount++;
+
+          // 4 quadrants: u < 0.5 vs u >= 0.5, v < 0.5 vs v >= 0.5
+          const qIdx = (v < 0.5 ? 0 : 2) + (u < 0.5 ? 0 : 1);
+          quadLums[qIdx] += lum;
+          quadCounts[qIdx]++;
+        }
+      }
+    }
+
+    if (samplePointsCount > 0) {
+      const meanInteriorLum = interiorLumSum / samplePointsCount;
+      const meanInteriorSat = interiorSatSum / samplePointsCount;
+      const darkFrac = darkPixelCount / samplePointsCount;
+
+      // Human skin has high saturation (0.25 - 0.50); paper sheets are neutral (< 0.18)
+      if (meanInteriorSat > 0.18) {
+        return {
+          detected: false,
+          corners: null,
+          documentScore: 0,
+          imageWidth: origW,
+          imageHeight: origH,
+          reason: 'Non-neutral substrate (color/skin detected; align paper sheet)',
+        };
+      }
+
+      // Paper sheet has very few dark pixels (< 8% ink/strokes); human faces/clothes have > 10%
+      if (darkFrac > 0.08) {
+        return {
+          detected: false,
+          corners: null,
+          documentScore: 0,
+          imageWidth: origW,
+          imageHeight: origH,
+          reason: 'Dark features detected (hair/clothing/background; align paper sheet)',
+        };
+      }
+
+      // All 4 quadrants must be bright paper surface
+      const minQuadLum = Math.min(...quadLums.map((sum, i) => sum / Math.max(1, quadCounts[i])));
+      if (minQuadLum < 82 || meanInteriorLum < 92) {
+        return {
+          detected: false,
+          corners: null,
+          documentScore: 0,
+          imageWidth: origW,
+          imageHeight: origH,
+          reason: 'Insufficient paper substrate luminance across quadrants',
+        };
+      }
     }
 
     // Scale corners back to original image coordinates
@@ -503,7 +758,7 @@ export async function detectDocumentPreviewClientSide(
       documentScore: sharpness,
       imageWidth: origW,
       imageHeight: origH,
-      reason: 'Document detected (Client Engine)',
+      reason: 'Physical document verified (Client Engine)',
     };
   } catch {
     return { detected: false, corners: null, documentScore: 0 };
@@ -672,6 +927,7 @@ export async function processPageClientSide(
         status: diagnostics.status,
         blurDetected: diagnostics.blurDetected,
         sharpnessScore: diagnostics.sharpnessScore,
+        sharpnessRaw: diagnostics.sharpnessRaw,
         orientation: 'NORMAL',
         pageDetected: true,
         cropReady,

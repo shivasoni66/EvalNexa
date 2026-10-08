@@ -46,25 +46,44 @@ logger = logging.getLogger("ai_eval_scanner")
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# CORS Configuration (Allows Browser Clients to Call http://localhost:8000)
+# CORS Configuration (Supports https://control.shivasoni.me, local dev, and wildcard)
 # ---------------------------------------------------------------------------
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "https://control.shivasoni.me,http://localhost:5173,http://localhost:3000,*",
+    ).split(",")
+    if o.strip()
+]
+
+
 @app.after_request
 def apply_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    origin = request.headers.get("Origin")
+    if origin and any(origin == o for o in ALLOWED_ORIGINS if o != "*"):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-INGESTION-KEY, X-API-KEY"
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, Authorization, X-INGESTION-KEY, X-API-KEY"
+    )
+    response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
 
 # ---------------------------------------------------------------------------
 # Health Check Endpoint: GET /health
 # ---------------------------------------------------------------------------
-@app.route("/health", methods=["GET"])
+@app.route("/health", methods=["GET", "OPTIONS"])
 def health_check():
     """
     Returns predictable JSON indicating scanner service availability.
     Consumed by apps/control-center/src/lib/scanningIntegration.ts:checkScanningServiceHealth()
     """
+    if request.method == "OPTIONS":
+        return ("", 204)
     return jsonify({
         "status": "ok",
         "service": "AI-EVAL-OpenCV Scanner Service",
